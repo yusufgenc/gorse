@@ -1272,7 +1272,7 @@ func (d *SQLDatabase) GetFeedbackStream(ctx context.Context, batchSize int, scan
 		}
 		if scan.EndTime != nil {
 			if d.driver == ClickHouse && hasValueCondition {
-				tx.Having("time_stamp <= ?", d.convertTimeZone(scan.EndTime))
+				tx.Having("max(time_stamp) <= ?", d.convertTimeZone(scan.EndTime))
 			} else {
 				tx.Where("time_stamp <= ?", d.convertTimeZone(scan.EndTime))
 			}
