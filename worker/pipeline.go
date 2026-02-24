@@ -35,7 +35,6 @@ import (
 	"github.com/samber/lo"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
 )
 
 type Pipeline struct {
@@ -192,8 +191,11 @@ func (p *Pipeline) Recommend(ctx context.Context, users []data.User, progress fu
 				log.Logger().Error("failed to rank items", zap.Error(err))
 				return
 			}
-		} else if p.Config.Recommend.Ranker.Type == "llm" && p.Config.Recommend.Ranker.Prompt != "" && p.Config.OpenAI.ChatCompletionModel != "" {
-			ranker, err := logics.NewChatRanker(p.Config.OpenAI, p.Config.Recommend.Ranker.Prompt)
+		} else if p.Config.Recommend.Ranker.Type == "llm" && p.Config.OpenAI.ChatCompletionModel != "" {
+			ranker, err := logics.NewChatReranker(
+				p.Config.Recommend.Ranker.RerankerAPI,
+				p.Config.Recommend.Ranker.QueryTemplate,
+				p.Config.Recommend.Ranker.DocumentTemplate)
 			if err != nil {
 				log.Logger().Error("failed to create LLM ranker", zap.Error(err))
 				return
@@ -219,7 +221,7 @@ func (p *Pipeline) Recommend(ctx context.Context, users []data.User, progress fu
 		}
 		if err = p.CacheClient.DeleteScores(ctx, []string{cache.Recommend}, cache.ScoreCondition{
 			Before: &recommendTime,
-			Subset: proto.String(userId),
+			Subset: new(userId),
 		}); err != nil {
 			log.Logger().Error("failed to delete stale recommendation", zap.Error(err))
 			return
@@ -265,7 +267,7 @@ func (p *Pipeline) checkUserActiveTime(ctx context.Context, userId string) bool 
 	}
 	// remove recommend cache for inactive users
 	if err := p.CacheClient.DeleteScores(ctx, []string{cache.Recommend},
-		cache.ScoreCondition{Subset: proto.String(userId)}); err != nil {
+		cache.ScoreCondition{Subset: new(userId)}); err != nil {
 		log.Logger().Error("failed to delete recommend cache", zap.String("user_id", userId), zap.Error(err))
 	}
 	return false
@@ -370,7 +372,7 @@ func (p *Pipeline) updateCollaborativeRecommend(
 		log.Logger().Error("failed to cache collaborative filtering recommendation time", zap.String("user_id", userId), zap.Error(err))
 		return errors.Trace(err)
 	}
-	if err := p.CacheClient.DeleteScores(ctx, []string{cache.CollaborativeFiltering}, cache.ScoreCondition{Before: &localStartTime, Subset: proto.String(userId)}); err != nil {
+	if err := p.CacheClient.DeleteScores(ctx, []string{cache.CollaborativeFiltering}, cache.ScoreCondition{Before: &localStartTime, Subset: new(userId)}); err != nil {
 		log.Logger().Error("failed to delete stale collaborative filtering recommendation result", zap.String("user_id", userId), zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -431,7 +433,7 @@ func (p *Pipeline) rankByClickTroughRate(
 func (p *Pipeline) rankByLLM(
 	ctx context.Context,
 	pCtx *parallel.Context,
-	ranker *logics.ChatRanker,
+	ranker *logics.ChatReranker,
 	user *data.User,
 	feedback []data.Feedback,
 	candidates []cache.Score,
@@ -487,12 +489,12 @@ func (p *Pipeline) rankByLLM(
 		}
 		itemCategories[item.ItemId] = item.Categories
 	}
-	for rank, itemId := range parsed {
+	for _, item := range parsed {
 		topItems = append(topItems, cache.Score{
-			Id:         itemId,
-			Score:      float64(len(parsed)-rank) / float64(len(parsed)), // normalize score to [0, 1]
+			Id:         item.Id,
+			Score:      item.Score,
 			Timestamp:  recommendTime,
-			Categories: itemCategories[itemId],
+			Categories: itemCategories[item.Id],
 		})
 	}
 	return topItems, nil

@@ -59,6 +59,11 @@ max_idle_conns = 64
 # Maximum amount of time a connection may be reused. The default value is "1m".
 conn_max_lifetime = "1m"
 
+[database.redis]
+
+# The maximum number of results to be returned by the FT.SEARCH command if LIMIT is used
+max_search_results = 10000
+
 [master]
 
 # GRPC port of the master node. The default value is 8086.
@@ -251,6 +256,7 @@ read_replacement_decay = 0.6
 # The type of the ranker. There are two types:
 #   none: no ranking (default).
 #   fm: factorization machines.
+#   llm: LLM-based reranker.
 type = "fm"
 
 # The time period to refresh recommendation for inactive users. The default values is 120h.
@@ -271,31 +277,33 @@ optimize_period = "360m"
 # The number of trials for hyperparameter optimization. The default value is 10.
 optimize_trials = 10
 
-# The prompt template for LLM ranker. The default value is empty.
-prompt = """
+# The prompt template for query.
+query_template = """
 You are a GitHub repository recommender system. Given a user is interested in the following repositories:
 {% for repo in feedback -%}
 - {{ repo.Comment }}
 {% endfor -%}
-Please sort the following repositories by the user's interests:
-```csv
-item_id,description
-{% for repo in items -%}
-{{ repo.ItemId }},{{ repo.Comment | replace(",", " ") | replace("\n", " ") }}
-{% endfor -%}
-```
-Return the sorted list of repository IDs in CSV format. For example:
-```csv
-{% for repo in items[:3] -%}
-{{ repo.ItemId }}
-{% endfor -%}
-```
+Please sort repositories by the user's interests.
 """
+
+# The prompt template for documents.
+document_template = '{{ item.Comment | replace(",", " ") | replace("\n", " ") }}'
 
 [recommend.ranker.early_stopping]
 
 # Number of epochs to wait if no improvement and then stop the training. The default value is 10.
 patience = 10
+
+[recommend.ranker.reranker_api]
+
+# Auth token for the reranker API.
+auth_token = ""
+
+# The reranker model.
+model = "qwen3-rerank"
+
+# URL for the reranker API, supports Jina style.
+url = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
 
 [recommend.fallback]
 
@@ -334,8 +342,8 @@ client_id = ""
 client_secret = ""
 
 # URL used by the OAuth provider to redirect users after they are successfully authenticated
-# (also referred to as the callback URL). You should set this to the concatenation of the 
-# Gorse dashboard URL and "/callback/oauth2". For example, if the Gorse dashboard URL is 
+# (also referred to as the callback URL). You should set this to the concatenation of the
+# Gorse dashboard URL and "/callback/oauth2". For example, if the Gorse dashboard URL is
 # http://localhost:8088, the redirect URL should be: http://localhost:8088/callback/oauth2
 redirect_url = ""
 

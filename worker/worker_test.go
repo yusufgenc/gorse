@@ -30,8 +30,8 @@ import (
 
 	"github.com/c-bata/goptuna"
 	"github.com/gorse-io/gorse/common/expression"
-	"github.com/gorse-io/gorse/common/mock"
 	"github.com/gorse-io/gorse/common/monitor"
+	"github.com/gorse-io/gorse/common/reranker"
 	"github.com/gorse-io/gorse/common/util"
 	"github.com/gorse-io/gorse/config"
 	"github.com/gorse-io/gorse/dataset"
@@ -47,7 +47,6 @@ import (
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/proto"
 )
 
 type WorkerTestSuite struct {
@@ -143,7 +142,7 @@ func (suite *WorkerTestSuite) TestCheckRecommendCacheTimeout() {
 	err = suite.CacheClient.Set(ctx, cache.Time(cache.Key(cache.RecommendUpdateTime, "0"), time.Now().Add(time.Hour*100)))
 	suite.NoError(err)
 	suite.False(suite.checkRecommendCacheOutOfDate(ctx, "0"))
-	err = suite.CacheClient.DeleteScores(ctx, []string{cache.Recommend}, cache.ScoreCondition{Subset: proto.String("0")})
+	err = suite.CacheClient.DeleteScores(ctx, []string{cache.Recommend}, cache.ScoreCondition{Subset: new("0")})
 	suite.NoError(err)
 	suite.True(suite.checkRecommendCacheOutOfDate(ctx, "0"))
 }
@@ -740,7 +739,7 @@ func (suite *WorkerTestSuite) TestRankByClickTroughRate() {
 
 func (suite *WorkerTestSuite) TestRankByLLM() {
 	ctx := context.Background()
-	mockAI := mock.NewOpenAIServer()
+	mockAI := reranker.NewMockServer()
 	go func() {
 		_ = mockAI.Start()
 	}()
@@ -754,16 +753,13 @@ func (suite *WorkerTestSuite) TestRankByLLM() {
 	err = suite.DataClient.BatchInsertItems(ctx, []data.Item{{ItemId: "1"}, {ItemId: "2"}, {ItemId: "3"}, {ItemId: "4"}, {ItemId: "5"}})
 	suite.NoError(err)
 
-	suite.Config.OpenAI = config.OpenAIConfig{
-		BaseURL:             mockAI.BaseURL(),
-		AuthToken:           mockAI.AuthToken(),
-		ChatCompletionModel: "deepseek-r1",
+	suite.Config.Recommend.Ranker.RerankerAPI = config.RerankerAPIConfig{
+		URL:       mockAI.URL(),
+		AuthToken: mockAI.AuthToken(),
+		Model:     "v1",
 	}
-	ranker, err := logics.NewChatRanker(suite.Config.OpenAI, "```csv"+`
-	{% for item in items %}
-	{{item.ItemId}}
-	{% endfor %}
-	`+"```")
+	ranker, err := logics.NewChatReranker(suite.Config.Recommend.Ranker.RerankerAPI,
+		"{{user.UserId}}", "{{item.ItemId}}")
 	suite.NoError(err)
 
 	itemCache := NewItemCache(suite.DataClient)
@@ -776,7 +772,7 @@ func (suite *WorkerTestSuite) TestRankByLLM() {
 	suite.Equal([]string{"1", "2", "3"}, lo.Map(result, func(d cache.Score, _ int) string {
 		return d.Id
 	}))
-	suite.Equal([]float64{1, float64(2) / 3, float64(1) / 3}, lo.Map(result, func(d cache.Score, _ int) float64 {
+	suite.Equal([]float64{1, 0.5, float64(1) / 3}, lo.Map(result, func(d cache.Score, _ int) float64 {
 		return d.Score
 	}))
 	for _, scored := range result {

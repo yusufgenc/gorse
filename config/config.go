@@ -78,6 +78,7 @@ type DatabaseConfig struct {
 	CacheTablePrefix string      `mapstructure:"cache_table_prefix"`
 	MySQL            MySQLConfig `mapstructure:"mysql"`
 	Postgres         SQLConfig   `mapstructure:"postgres"`
+	Redis            RedisConfig `mapstructure:"redis"`
 }
 
 type MySQLConfig struct {
@@ -91,6 +92,10 @@ type SQLConfig struct {
 	MaxOpenConns    int           `mapstructure:"max_open_conns" validate:"gte=0"`
 	MaxIdleConns    int           `mapstructure:"max_idle_conns" validate:"gte=0"`
 	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime" validate:"gte=0"`
+}
+
+type RedisConfig struct {
+	MaxSearchResults int `mapstructure:"max_search_results" validate:"gt=0"`
 }
 
 func (db *DatabaseConfig) StorageOptions(path string) []storage.Option {
@@ -107,6 +112,12 @@ func (db *DatabaseConfig) StorageOptions(path string) []storage.Option {
 			storage.WithMaxOpenConns(db.Postgres.MaxOpenConns),
 			storage.WithMaxIdleConns(db.Postgres.MaxIdleConns),
 			storage.WithConnMaxLifetime(db.Postgres.ConnMaxLifetime),
+		}
+	}
+	if strings.HasPrefix(path, storage.RedisPrefix) || strings.HasPrefix(path, storage.RedissPrefix) ||
+		strings.HasPrefix(path, storage.RedisClusterPrefix) || strings.HasPrefix(path, storage.RedissClusterPrefix) {
+		return []storage.Option{
+			storage.WithMaxSearchResults(db.Redis.MaxSearchResults),
 		}
 	}
 	return nil
@@ -350,15 +361,17 @@ type ReplacementConfig struct {
 }
 
 type RankerConfig struct {
-	Type           string              `mapstructure:"type" validate:"oneof=none fm llm"`
-	Recommenders   []string            `mapstructure:"recommenders"`
-	CacheExpire    time.Duration       `mapstructure:"cache_expire" validate:"gt=0"`
-	FitPeriod      time.Duration       `mapstructure:"fit_period" validate:"gt=0"`
-	FitEpoch       int                 `mapstructure:"fit_epoch" validate:"gt=0"`
-	OptimizePeriod time.Duration       `mapstructure:"optimize_period" validate:"gte=0"`
-	OptimizeTrials int                 `mapstructure:"optimize_trials" validate:"gt=0"`
-	Prompt         string              `mapstructure:"prompt"`
-	EarlyStopping  EarlyStoppingConfig `mapstructure:"early_stopping"`
+	Type             string              `mapstructure:"type" validate:"oneof=none fm llm"`
+	Recommenders     []string            `mapstructure:"recommenders"`
+	CacheExpire      time.Duration       `mapstructure:"cache_expire" validate:"gt=0"`
+	FitPeriod        time.Duration       `mapstructure:"fit_period" validate:"gt=0"`
+	FitEpoch         int                 `mapstructure:"fit_epoch" validate:"gt=0"`
+	OptimizePeriod   time.Duration       `mapstructure:"optimize_period" validate:"gte=0"`
+	OptimizeTrials   int                 `mapstructure:"optimize_trials" validate:"gt=0"`
+	QueryTemplate    string              `mapstructure:"query_template"`
+	DocumentTemplate string              `mapstructure:"document_template"`
+	EarlyStopping    EarlyStoppingConfig `mapstructure:"early_stopping"`
+	RerankerAPI      RerankerAPIConfig   `mapstructure:"reranker_api"`
 }
 
 type FallbackConfig struct {
@@ -379,6 +392,12 @@ type OIDCConfig struct {
 	ClientID     string `mapstructure:"client_id"`
 	ClientSecret string `mapstructure:"client_secret"`
 	RedirectURL  string `mapstructure:"redirect_url" validate:"omitempty,endswith=/callback/oauth2"`
+}
+
+type RerankerAPIConfig struct {
+	AuthToken string `mapstructure:"auth_token"`
+	Model     string `mapstructure:"model"`
+	URL       string `mapstructure:"url"`
 }
 
 type OpenAIConfig struct {
@@ -433,6 +452,9 @@ func GetDefaultConfig() *Config {
 				MaxOpenConns:    64,
 				MaxIdleConns:    64,
 				ConnMaxLifetime: time.Minute,
+			},
+			Redis: RedisConfig{
+				MaxSearchResults: 10000,
 			},
 		},
 		Master: MasterConfig{
@@ -571,6 +593,8 @@ func setDefault() {
 	viper.SetDefault("database.postgres.max_open_conns", defaultConfig.Database.Postgres.MaxOpenConns)
 	viper.SetDefault("database.postgres.max_idle_conns", defaultConfig.Database.Postgres.MaxIdleConns)
 	viper.SetDefault("database.postgres.conn_max_lifetime", defaultConfig.Database.Postgres.ConnMaxLifetime)
+	// [database.redis]
+	viper.SetDefault("database.redis.max_search_results", defaultConfig.Database.Redis.MaxSearchResults)
 	// [master]
 	viper.SetDefault("master.port", defaultConfig.Master.Port)
 	viper.SetDefault("master.host", defaultConfig.Master.Host)
@@ -661,6 +685,9 @@ var bindings = []configBinding{
 	{"openai.base_url", "OPENAI_BASE_URL"},
 	{"openai.auth_token", "OPENAI_AUTH_TOKEN"},
 	{"openai.chat_completion_model", "OPENAI_CHAT_COMPLETION_MODEL"},
+	{"recommend.ranker.reranker_api.url", "RERANKER_URL"},
+	{"recommend.ranker.reranker_api.model", "RERANKER_MODEL"},
+	{"recommend.ranker.reranker_api.auth_token", "RERANKER_AUTH_TOKEN"},
 }
 
 // LoadConfig loads configuration from toml file.
