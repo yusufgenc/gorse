@@ -131,6 +131,11 @@ func (NoDatabase) GetUserFeedback(context.Context, string, *time.Time, ...expres
 	return nil, ErrNoDatabase
 }
 
+// GetUserItemIds method of NoDatabase returns ErrNoDatabase.
+func (NoDatabase) GetUserItemIds(context.Context, string, *time.Time) ([]string, error) {
+	return nil, ErrNoDatabase
+}
+
 // GetUserItemFeedback method of NoDatabase returns ErrNoDatabase.
 func (NoDatabase) GetUserItemFeedback(_ context.Context, _, _ string, _ ...string) ([]Feedback, error) {
 	return nil, ErrNoDatabase

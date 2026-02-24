@@ -849,6 +849,24 @@ func (p ProxyClient) GetUserFeedback(ctx context.Context, userId string, endTime
 	return feedback, nil
 }
 
+// GetUserItemIds returns all item IDs for a user via proxy.
+// Falls back to GetUserFeedback and extracts item IDs since the proto doesn't have a dedicated RPC.
+func (p ProxyClient) GetUserItemIds(ctx context.Context, userId string, endTime *time.Time) ([]string, error) {
+	feedback, err := p.GetUserFeedback(ctx, userId, endTime)
+	if err != nil {
+		return nil, err
+	}
+	itemIds := make([]string, 0, len(feedback))
+	seen := make(map[string]struct{}, len(feedback))
+	for _, f := range feedback {
+		if _, ok := seen[f.ItemId]; !ok {
+			seen[f.ItemId] = struct{}{}
+			itemIds = append(itemIds, f.ItemId)
+		}
+	}
+	return itemIds, nil
+}
+
 func (p ProxyClient) GetUserItemFeedback(ctx context.Context, userId, itemId string, feedbackTypes ...string) ([]Feedback, error) {
 	var types []*protocol.FeedbackTypeExpression
 	for _, t := range feedbackTypes {

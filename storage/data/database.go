@@ -248,6 +248,7 @@ type Database interface {
 	ModifyUser(ctx context.Context, userId string, patch UserPatch) error
 	GetUsers(ctx context.Context, cursor string, n int) (string, []User, error)
 	GetUserFeedback(ctx context.Context, userId string, endTime *time.Time, feedbackTypes ...expression.FeedbackTypeExpression) ([]Feedback, error)
+	GetUserItemIds(ctx context.Context, userId string, endTime *time.Time) ([]string, error)
 	GetUserItemFeedback(ctx context.Context, userId, itemId string, feedbackTypes ...string) ([]Feedback, error)
 	DeleteUserItemFeedback(ctx context.Context, userId, itemId string, feedbackTypes ...string) (int, error)
 	BatchInsertFeedback(ctx context.Context, feedback []Feedback, insertUser, insertItem, overwrite bool) error

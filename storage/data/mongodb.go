@@ -587,6 +587,28 @@ func (db *MongoDB) GetUserStream(ctx context.Context, batchSize int) (chan []Use
 	return userChan, errChan
 }
 
+// GetUserItemIds returns all item IDs that a user has interacted with.
+func (db *MongoDB) GetUserItemIds(ctx context.Context, userId string, endTime *time.Time) ([]string, error) {
+	c := db.client.Database(db.dbName).Collection(db.FeedbackTable())
+	filter := bson.M{
+		"feedbackkey.userid": bson.M{"$eq": userId},
+	}
+	if endTime != nil {
+		filter["timestamp"] = bson.M{"$lte": endTime}
+	}
+	values, err := c.Distinct(ctx, "feedbackkey.itemid", filter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	itemIds := make([]string, 0, len(values))
+	for _, v := range values {
+		if id, ok := v.(string); ok {
+			itemIds = append(itemIds, id)
+		}
+	}
+	return itemIds, nil
+}
+
 // GetUserFeedback returns feedback of a user from MongoDB.
 func (db *MongoDB) GetUserFeedback(ctx context.Context, userId string, endTime *time.Time, feedbackTypes ...expression.FeedbackTypeExpression) ([]Feedback, error) {
 	c := db.client.Database(db.dbName).Collection(db.FeedbackTable())

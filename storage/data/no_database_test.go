@@ -72,6 +72,8 @@ func TestNoDatabase(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNoDatabase)
 	_, err = database.GetUserFeedback(ctx, "", lo.ToPtr(time.Now()))
 	assert.ErrorIs(t, err, ErrNoDatabase)
+	_, err = database.GetUserItemIds(ctx, "", lo.ToPtr(time.Now()))
+	assert.ErrorIs(t, err, ErrNoDatabase)
 	_, err = database.GetItemFeedback(ctx, "")
 	assert.ErrorIs(t, err, ErrNoDatabase)
 	_, _, err = database.GetFeedback(ctx, "", 0, nil, lo.ToPtr(time.Now()))

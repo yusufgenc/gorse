@@ -946,6 +946,39 @@ func (d *SQLDatabase) GetUserStream(ctx context.Context, batchSize int) (chan []
 	return userChan, errChan
 }
 
+// GetUserItemIds returns all item IDs that a user has interacted with.
+// This is optimized to select only item_id column for building exclusion sets.
+func (d *SQLDatabase) GetUserItemIds(ctx context.Context, userId string, endTime *time.Time) ([]string, error) {
+	tx := d.gormDB.WithContext(ctx)
+	if d.driver == ClickHouse {
+		tx = tx.Table(d.UserFeedbackTable())
+	} else {
+		tx = tx.Table(d.FeedbackTable())
+	}
+	tx = tx.Select("DISTINCT item_id").Where("user_id = ?", userId)
+	if endTime != nil {
+		if d.driver == ClickHouse {
+			tx = tx.Where("time_stamp <= ?", d.convertTimeZone(endTime))
+		} else {
+			tx = tx.Where("time_stamp <= ?", d.convertTimeZone(endTime))
+		}
+	}
+	result, err := tx.Rows()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer result.Close()
+	var itemIds []string
+	for result.Next() {
+		var itemId string
+		if err = result.Scan(&itemId); err != nil {
+			return nil, errors.Trace(err)
+		}
+		itemIds = append(itemIds, itemId)
+	}
+	return itemIds, nil
+}
+
 // GetUserFeedback returns feedback of a user from MySQL.
 func (d *SQLDatabase) GetUserFeedback(ctx context.Context, userId string, endTime *time.Time, feedbackTypes ...expression.FeedbackTypeExpression) ([]Feedback, error) {
 	tx := d.gormDB.WithContext(ctx)
