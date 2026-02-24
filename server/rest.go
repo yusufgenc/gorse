@@ -539,6 +539,7 @@ func (s *RestServer) CreateWebService() {
 		Param(ws.QueryParameter("write-back-delay", "Timestamp delay of write back feedback (format 0h0m0s)").DataType("string")).
 		Param(ws.QueryParameter("n", "Number of returned items").DataType("integer")).
 		Param(ws.QueryParameter("offset", "Offset of returned items").DataType("integer")).
+		Param(ws.QueryParameter("refresh", "Force fresh recommendation, bypassing cache cooldown").DataType("boolean")).
 		Returns(http.StatusOK, "OK", []string{}).
 		Writes([]string{}))
 	ws.Route(ws.GET("/recommend/{user-id}/{category}").To(s.getRecommend).
@@ -552,6 +553,7 @@ func (s *RestServer) CreateWebService() {
 		Param(ws.QueryParameter("write-back-delay", "Timestamp delay of write back feedback (format 0h0m0s)").DataType("string")).
 		Param(ws.QueryParameter("n", "Number of returned items").DataType("integer")).
 		Param(ws.QueryParameter("offset", "Offset of returned items").DataType("integer")).
+		Param(ws.QueryParameter("refresh", "Force fresh recommendation, bypassing cache cooldown").DataType("boolean")).
 		Returns(http.StatusOK, "OK", []string{}).
 		Writes([]string{}))
 	ws.Route(ws.POST("/session/recommend").To(s.sessionRecommend).
@@ -867,6 +869,7 @@ func (s *RestServer) getRecommend(request *restful.Request, response *restful.Re
 		BadRequest(response, err)
 		return
 	}
+	refresh := strings.EqualFold(request.QueryParameter("refresh"), "true")
 	// On-demand recommendation with caching.
 	// When cache_expire > 0, serve from a per-user cache that is refreshed
 	// after the cooldown period expires. This avoids redundant computation
@@ -877,7 +880,7 @@ func (s *RestServer) getRecommend(request *restful.Request, response *restful.Re
 
 	// Try on-demand cache first (cooldown period).
 	cacheHit := false
-	if cacheExpire > 0 {
+	if cacheExpire > 0 && !refresh {
 		if cachedAt, cErr := s.CacheClient.Get(ctx, cache.Key(cache.RecommendUpdateTime, userId)).Time(); cErr == nil && !cachedAt.IsZero() && time.Since(cachedAt) < cacheExpire {
 			if cached, cErr := s.CacheClient.SearchScores(ctx, cache.Recommend, userId, categories, 0, limit); cErr == nil && len(cached) > 0 {
 				scores = cached
