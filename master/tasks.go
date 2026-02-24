@@ -436,6 +436,16 @@ func (m *Master) LoadDataFromDatabase(
 		var itemFeedback []data.Feedback
 		var itemGroupIndex int
 		itemHasFeedback := make([]bool, len(itemGroups[i]))
+
+		// Build a map from item ID to group index for O(1) lookups instead of O(n) linear scan.
+		itemGroupMap := make(map[string]int, len(itemGroups[i]))
+		for idx, item := range itemGroups[i] {
+			itemGroupMap[item.ItemId] = idx
+		}
+
+		// Use local counter to avoid per-feedback mutex lock.
+		localPosFeedbackCount := 0
+
 		feedbackChan, errChan := database.GetFeedbackStream(newCtx, batchSize,
 			data.WithBeginItemId(itemGroups[i][0].ItemId),
 			data.WithEndItemId(itemGroups[i][len(itemGroups[i])-1].ItemId),
@@ -457,36 +467,39 @@ func (m *Master) LoadDataFromDatabase(
 				// insert feedback to positive set
 				positiveSet[userIndex].Add(itemIndex)
 
+				localPosFeedbackCount++
+
+				// Lock for all shared-state mutations: evaluator, dataset, and
+				// non-personalized recommenders are not thread-safe.
 				mu.Lock()
-				posFeedbackCount++
-				// insert feedback to evaluator
 				evaluator.Add(f.FeedbackType, f.Value, userIndex, itemIndex, f.Timestamp)
+				dataSet.AddFeedback(f.UserId, f.ItemId, f.Timestamp)
 				mu.Unlock()
 
-				// append item feedback
-				if len(itemFeedback) == 0 || itemFeedback[len(itemFeedback)-1].ItemId == f.ItemId {
-					itemFeedback = append(itemFeedback, f)
-				} else {
-					// add item to non-personalized recommenders
+				// find item group index via O(1) map lookup
+				newGroupIndex, ok := itemGroupMap[f.ItemId]
+				if !ok {
+					continue
+				}
+
+				// append item feedback — flush previous group if item changed
+				if len(itemFeedback) > 0 && itemFeedback[len(itemFeedback)-1].ItemId != f.ItemId {
 					itemHasFeedback[itemGroupIndex] = true
+					mu.Lock()
 					for _, recommender := range nonPersonalizedRecommenders {
 						recommender.Push(itemGroups[i][itemGroupIndex], itemFeedback)
 					}
+					mu.Unlock()
 					itemFeedback = itemFeedback[:0]
-					itemFeedback = append(itemFeedback, f)
 				}
-				// find item group index
-				for itemGroupIndex = 0; itemGroupIndex < len(itemGroups[i]); itemGroupIndex++ {
-					if itemGroups[i][itemGroupIndex].ItemId == f.ItemId {
-						break
-					}
-				}
-				dataSet.AddFeedback(f.UserId, f.ItemId, f.Timestamp)
+				itemGroupIndex = newGroupIndex
+				itemFeedback = append(itemFeedback, f)
 			}
 			span.Add(len(feedback))
 		}
 
 		// add item to non-personalized recommenders
+		mu.Lock()
 		if len(itemFeedback) > 0 {
 			itemHasFeedback[itemGroupIndex] = true
 			for _, recommender := range nonPersonalizedRecommenders {
@@ -500,9 +513,14 @@ func (m *Master) LoadDataFromDatabase(
 				}
 			}
 		}
+		mu.Unlock()
 		if err = <-errChan; err != nil {
 			return errors.Trace(err)
 		}
+		// Aggregate local counter into shared counter
+		mu.Lock()
+		posFeedbackCount += localPosFeedbackCount
+		mu.Unlock()
 		return nil
 	})
 	if err != nil {

@@ -867,17 +867,51 @@ func (s *RestServer) getRecommend(request *restful.Request, response *restful.Re
 		BadRequest(response, err)
 		return
 	}
-	// online recommendation
-	recommender, err := logics.NewRecommender(s.Config.Recommend, s.CacheClient, s.DataClient, true, userId, categories)
-	if err != nil {
-		InternalServerError(response, err)
-		return
+	// On-demand recommendation with caching.
+	// When cache_expire > 0, serve from a per-user cache that is refreshed
+	// after the cooldown period expires. This avoids redundant computation
+	// when the same user hits the endpoint repeatedly.
+	var scores []cache.Score
+	limit := n + offset
+	cacheExpire := s.Config.Recommend.CacheExpire
+
+	// Try on-demand cache first (cooldown period).
+	cacheHit := false
+	if cacheExpire > 0 {
+		if cachedAt, cErr := s.CacheClient.Get(ctx, cache.Key(cache.RecommendUpdateTime, userId)).Time(); cErr == nil && !cachedAt.IsZero() && time.Since(cachedAt) < cacheExpire {
+			if cached, cErr := s.CacheClient.SearchScores(ctx, cache.Recommend, userId, categories, 0, limit); cErr == nil && len(cached) > 0 {
+				scores = cached
+				cacheHit = true
+			}
+		}
 	}
-	scores, err := recommender.Recommend(ctx, n+offset)
-	if err != nil {
-		InternalServerError(response, err)
-		return
+
+	if !cacheHit {
+		// Compute fresh recommendations.
+		recommender, err := logics.NewRecommender(s.Config.Recommend, s.CacheClient, s.DataClient, true, userId, categories)
+		if err != nil {
+			InternalServerError(response, err)
+			return
+		}
+		scores, err = recommender.Recommend(ctx, limit)
+		if err != nil {
+			InternalServerError(response, err)
+			return
+		}
+		// Write results to on-demand cache so subsequent requests within
+		// the cooldown period are served instantly.
+		if cacheExpire > 0 && len(scores) > 0 {
+			now := time.Now()
+			cached := make([]cache.Score, len(scores))
+			copy(cached, scores)
+			for i := range cached {
+				cached[i].Timestamp = now
+			}
+			_ = s.CacheClient.AddScores(ctx, cache.Recommend, userId, cached)
+			_ = s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.RecommendUpdateTime, userId), now))
+		}
 	}
+
 	if len(scores) > offset {
 		scores = scores[offset:]
 	} else {

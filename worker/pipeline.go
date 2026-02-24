@@ -50,6 +50,16 @@ type Pipeline struct {
 }
 
 func (p *Pipeline) Recommend(ctx context.Context, users []data.User, progress func(completed, throughput int)) {
+	// Skip per-user batch recommendation when collaborative filtering is
+	// disabled and the ranker is set to "none".  In this configuration,
+	// recommendations are computed on-demand by the server, so the worker
+	// has nothing useful to pre-compute per user.
+	if strings.EqualFold(p.Config.Recommend.Collaborative.Type, "none") &&
+		strings.EqualFold(p.Config.Recommend.Ranker.Type, "none") {
+		log.Logger().Info("skip offline recommendation (collaborative=none, ranker=none)")
+		return
+	}
+
 	startRecommendTime := time.Now()
 	itemCache := NewItemCache(p.DataClient)
 	log.Logger().Info("ranking recommendation",
